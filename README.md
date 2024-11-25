@@ -25,6 +25,11 @@ With render graph enable, we can also use the STP (Spatial-Temporal Postprocessi
 ![{3EDF0B1A-939A-4142-A76A-3EE6E5CF391A}](https://github.com/user-attachments/assets/77bc82df-16ba-4af8-b1d0-d5d190c17c8f)
 ![{672BBA13-F723-48CF-A1C4-36DD1526EE9E}](https://github.com/user-attachments/assets/e9b94cde-2101-43ac-a713-98d7f8a417df)
 
+#### Known Issue
+Somtimes the depth texture used by the SSR will act in undefiend behaviour if you swtich between different reder scale, turn on/off STP. 
+
+Remove the SSR renderer feature and re-add it can solve it. I plan to solve the issue in the future.
+
 ## References
 
 [JoshuaLim007's SSR](https://github.com/JoshuaLim007/Unity-ScreenSpaceReflections-URP)
