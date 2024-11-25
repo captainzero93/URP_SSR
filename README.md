@@ -12,8 +12,11 @@ It provide 3 methods to perform SSR tracing, mostly for my own references.
 
    > for rougher surface pixel, the Hi-Z method will fallback to use screen space trace, which imporves performance.
 
+## Both deferred and forward path are support.
+When using the forward path, it creates a "thin" G-buffer that contains the scene's metallic and smoothness properties from each renderer's standard lit shader.
 
-#### If TAA(or STP in Unity 6) is enabled, it will mixed the SSR result with previous frame. So it gives a extra bounce of reflection.
+
+> ## If TAA(or STP in Unity 6) is enabled, it will mixed the SSR result with previous frame. So it gives a extra bounce of reflection.
 
 It also proivide option to trace the reflection in half scale (0.25 scale has aliasing issue, I should fix it in the future)
 ![{031FE112-CBA8-43EF-896E-D40C387018B5}](https://github.com/user-attachments/assets/6f8a1d6d-934f-4100-89f3-bb58408cae37)
