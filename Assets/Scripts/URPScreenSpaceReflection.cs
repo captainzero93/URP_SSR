@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using UnityEngine;
 using UnityEngine.Rendering;
@@ -114,11 +115,18 @@ namespace URPSSR
                 HierarchicalZPass.ReleaseSliceBuffer(ref _hizBuffer);
             }
         }
+
+        private PropertyInfo _renderPathReflectionCached;
         
         public override void AddRenderPasses(ScriptableRenderer renderer, ref RenderingData renderingData)
         {
             var isDeferred = false;
-            if(renderer is UniversalRenderer && ((UniversalRenderer)renderer).renderingModeRequested == RenderingMode.Deferred)
+            if (_renderPathReflectionCached == null)
+            {
+                var universalRendererType = renderer.GetType();
+                _renderPathReflectionCached = universalRendererType.GetProperty("renderingModeRequested", BindingFlags.NonPublic | BindingFlags.Instance);   
+            }
+            if((RenderingMode)_renderPathReflectionCached.GetValue(renderer) == RenderingMode.Deferred)
             {
                 isDeferred = true;
             }

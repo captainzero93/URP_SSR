@@ -1,4 +1,6 @@
 using System;
+using System.Reflection;
+using System.Runtime.CompilerServices;
 using UnityEngine;
 using UnityEngine.Rendering;
 using UnityEngine.Rendering.Universal;
@@ -149,6 +151,7 @@ namespace URPSSR
 
         private float _ssrIntensity;
         private bool _deferred;
+        private MethodInfo _isTemporalAAEnabledMethod;
         
         private static MaterialPropertyBlock s_SharedPropertyBlock = new MaterialPropertyBlock();
 
@@ -349,6 +352,13 @@ namespace URPSSR
             UniversalResourceData resourcesData = frameData.Get<UniversalResourceData>();
             UniversalCameraData cameraData = frameData.Get<UniversalCameraData>();
 
+            if (_isTemporalAAEnabledMethod == null)
+            {
+                var universalCameraDataType = cameraData.GetType();
+                _isTemporalAAEnabledMethod = universalCameraDataType?.GetMethod("IsTemporalAAEnabled", 
+                    BindingFlags.NonPublic | BindingFlags.Instance);   
+            }
+            var isTemporalAAEnabled = _isTemporalAAEnabledMethod != null ? (bool)_isTemporalAAEnabledMethod.Invoke(cameraData, null) : false;
             TextureHandle source, destination;
             TextureHandle copyColorTexture;
 
@@ -384,8 +394,8 @@ namespace URPSSR
                 passData.inputTexture = copyColorTexture;
                 passData.destination = resolveSSRColorTexture;
                 passData.ssrIntensity = _ssrIntensity;
-                passData.influence = cameraData.IsTemporalAAEnabled()  ? 0.1f : 1f;
-                SSRPassUtil.SetupRequirementTextureToRead(builder,cameraData.IsTemporalAAEnabled() ? ScriptableRenderPassInput.Motion : ScriptableRenderPassInput.Depth, ref resourcesData);
+                passData.influence = isTemporalAAEnabled ? 0.1f : 1f;
+                SSRPassUtil.SetupRequirementTextureToRead(builder, isTemporalAAEnabled ? ScriptableRenderPassInput.Motion : ScriptableRenderPassInput.Depth, ref resourcesData);
                 if (_deferred)
                 {
                     SSRPassUtil.SetupGbufferTextureToRead(builder, ref resourcesData);
@@ -423,7 +433,7 @@ namespace URPSSR
                 
             }
 
-           if (cameraData.IsTemporalAAEnabled())
+           if (isTemporalAAEnabled)
            {
                using (var builder = renderGraph.AddRasterRenderPass<CopyPassData>("SSR Write To History", out var passData, profilingSampler))
                {
