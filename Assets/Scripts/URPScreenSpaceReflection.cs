@@ -39,7 +39,7 @@ namespace URPSSR
         [Header("SSR Setttings")] public SSRMethod SSRPass;
 
         public bool HizOnly;
-        [Range(0.01f, 0.25f)] public float SsrStepSize = 0.5f;
+        [Range(0.01f, 0.25f)] public float SsrStepSize = 0.1f;
         [Header("SSR Composite Settings")] public bool RenderCompositeResult = true;
 
         public enum SSRNativeScale
