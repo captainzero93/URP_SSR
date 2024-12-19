@@ -33,7 +33,7 @@ void DepthCopy(uint3 id : SV_DispatchThreadID)
     {
         return;
     }
-    _DepthPyramidTextureArray[uint3(id.xy, 0)] = 1.0 - _CameraDepthTexture[id.xy * _SSRGlobalInvScale];
+    _DepthPyramidTextureArray[uint3(id.xy, 0)] = _CameraDepthTexture[id.xy * _SSRGlobalInvScale];
 }
 
 [numthreads(THREADS, THREADS, 1)]
@@ -56,8 +56,8 @@ void CSMain(uint3 id : SV_DispatchThreadID)
     float d1 = SampleDepth(o1);
     float d2 = SampleDepth(o2);
     float d3 = SampleDepth(o3);
-    minValue = min(min(d0, d1), min(d2, d3));
-    //minValue =  max(max(d0, d1), max(d2, d3));
+    //minValue = min(min(d0, d1), min(d2, d3));
+    minValue =  max(max(d0, d1), max(d2, d3));
 
     _DepthPyramidTextureArray[uint3(id.xy, _DestinationSlice)] = minValue;
 }

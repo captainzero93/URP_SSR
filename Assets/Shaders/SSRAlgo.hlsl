@@ -23,9 +23,9 @@ float _Thickness;
 float _DitherSize = 4;
 
 #define binaryStepCount 5
-#define LinearVSSteps 100
-#define HiZDepthBias 0.0001
-#define LinearSSSteps 30
+#define LinearVSSteps 60
+#define HiZDepthBias 0.00001
+#define LinearSSSteps 60
 #define LINEAR_TRACE_DEPTH_BIAS 0.05
 #define LINEAR_TRACE_2D_THICKNESS 0.1
 #define HizSSSteps 128
@@ -89,17 +89,9 @@ void rayIterations(Texture2D frontDepth, SamplerState DepthSampler,
         hitPixel = permute ? P.yx : P;
         sceneZ = SAMPLE_TEXTURE2D_LOD(frontDepth, DepthSampler, half4(hitPixel * invSize, 0, 0), 0).r;
         sceneZ = -LinearEyeDepth(sceneZ, _ZBufferParams);
-
-        bool isBehind = (rayZMin <= sceneZ - LINEAR_TRACE_DEPTH_BIAS);
-        float diff = -(rayZMax - sceneZ);
-        if (isBehind)
-        {
-            if (diff < layerThickness)
-            {
-                intersecting = true;
-            }
-        }
-        stop = intersecting;
+        bool isBehind = (rayZMin <= sceneZ);
+        intersecting = isBehind && (rayZMax >= sceneZ - layerThickness);
+        stop = isBehind;
     }
 
     P -= dP, Q.z -= dQ.z, k -= dk;
@@ -179,7 +171,7 @@ bool Linear2D_Trace(Texture2D frontDepth,
     half2 dP = half2(stepDirection, invdx * delta.y);
     half3 dQ = (Q1 - Q0) * invdx;
     half dk = (k1 - k0) * invdx;
-
+    
     dP *= stepSize;
     dQ *= stepSize;
     dk *= stepSize;
@@ -447,15 +439,14 @@ half4 FragSSRLinearSS(Varyings input) : SV_Target
     float3 hitPointVS = rayOrigin;
     float2 reflectUV = 0; //ComputeNormalizedDeviceCoordinates(positionWS, UNITY_MATRIX_VP);
     float stepCount = 0;
-    float stepSize = _StepSize * 100;
-    float edgeMask = 0;
+    float stepSize = _StepSize * 30;
     bool traceHit = Linear2D_Trace(_CameraDepthTexture, sampler_PointClamp, rayOrigin, reflectRayVS,
                                       _SSR_ProjectionMatrix, _SSR_ScreenSize, jitter, LinearSSSteps,
                                       LINEAR_TRACE_2D_THICKNESS,
                                       traceDistance, reflectUV, stepSize, hitPointVS, stepCount);
     reflectUV /= _SSR_ScreenSize;
 
-    edgeMask = traceHit ? 1 : 0;
+    float edgeMask = traceHit ? 1 : 0;
     UNITY_BRANCH
     if (traceHit)
     {
@@ -536,7 +527,7 @@ inline bool floatEqApprox(float a, float b)
 inline float sampleDepth(float2 uv, uint index)
 {
     uv = scaledUv(uv, index);
-    return UNITY_SAMPLE_TEX2DARRAY(_DepthPyramid, float3(uv, index));
+    return 1.0 - UNITY_SAMPLE_TEX2DARRAY(_DepthPyramid, float3(uv, index));
 }
 
 inline float2 cross_epsilon()
@@ -613,7 +604,6 @@ inline float3 hiZTrace(float thickness, float3 p, float3 v, float MaxIterations,
     float3 ray = p.xyz;
     // cross to next cell to avoid immediate self-intersection
     float2 rayCell = cell(ray.xy, cell_count(level));
-    float failedToHit = 1;
     ray = intersectCellBoundary(ray, d, rayCell.xy, cell_count(level), crossStep.xy, crossOffset.xy);
     [loop]
     while (level >= endLevel
@@ -644,21 +634,19 @@ inline float3 hiZTrace(float thickness, float3 p, float3 v, float MaxIterations,
         {
             // intersect the boundary of that cell instead, and go up a level for taking a larger step next iteration
             tmpRay = intersectCellBoundary(ray, d, oldCellIdx, cellCount.xy, crossStep.xy, crossOffset.xy);
-            failedToHit = 0;
             level = min(rootLevel, level + 2.0f);
         }
         else if (level == startLevel)
         {
-            float minZOffset = (minZ + (1 - p.z) * thickness);
+            float minZOffset = (minZ + (1.0 - p.z) * thickness);
             isSky = minZ == 1;
             if (minZ >= 1)
                 break;
             [flatten]
-            if (abs(min_minus_ray) > HiZDepthBias)
+            if (abs(min_minus_ray) >= 0.00002f)
             {
                 tmpRay = intersectCellBoundary(ray, d, oldCellIdx, cellCount.xy, crossStep.xy, crossOffset.xy);
                 level = HIZ_START_LEVEL + 1;
-                failedToHit = 0;
             }
         }
         // go down a level in the hi-z buffer
@@ -676,8 +664,8 @@ half4 FragSSRHizSS(Varyings input) : SV_Target
     UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
 
     // Sample raw depth and convert texcoord to native UV space
-    float rawDepth = 1.0f - sampleDepth(input.texcoord, 0);
     float2 nativeUV = PaddedToNativeUV(input.texcoord);
+    float rawDepth = SAMPLE_TEXTURE2D_X_LOD(_CameraDepthTexture, sampler_PointClamp, nativeUV, 0).r;
     float2 originalUV = input.texcoord;
     input.texcoord = nativeUV;
 

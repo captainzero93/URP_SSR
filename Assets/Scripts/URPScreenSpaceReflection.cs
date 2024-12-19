@@ -39,8 +39,7 @@ namespace URPSSR
         [Header("SSR Setttings")] public SSRMethod SSRPass;
 
         public bool HizOnly;
-        [Range(0.01f, 0.5f)] public float SsrStepSize = 0.5f;
-        public bool DebugViewSSRLinearResult;
+        [Range(0.01f, 0.25f)] public float SsrStepSize = 0.5f;
         [Header("SSR Composite Settings")] public bool RenderCompositeResult = true;
 
         public enum SSRNativeScale
@@ -178,13 +177,7 @@ namespace URPSSR
             _ssrTracePass.ConfigureInput(isDeferred ? ScriptableRenderPassInput.Depth : ScriptableRenderPassInput.Normal);
             _ssrTraceMat.SetFloat("_StepSize", SsrStepSize);
             _ssrTracePass.SetupMembers(_ssrTraceMat, (int)SSRPass, "_SSR_Linear", SSRPass == SSRMethod.HizSS, isDeferred);
-            _ssrTracePass.DebugReflectMap = DebugViewSSRLinearResult;
-
-            if (DebugViewSSRLinearResult)
-            {
-                _ssrTracePass.renderPassEvent = (RenderPassEvent)RenderPassEvent.AfterRenderingPostProcessing;
-                _ssrTracePass.SetupMembers(_ssrTraceMat, (int)SSRPass, "_SSR_Linear", SSRPass == SSRMethod.HizSS, isDeferred);
-            }
+            _ssrTracePass.DebugReflectMap = false;
 
             renderer.EnqueuePass(_ssrTracePass);
 
