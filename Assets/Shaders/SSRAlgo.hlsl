@@ -24,7 +24,7 @@ float _DitherSize = 4;
 
 #define binaryStepCount 5
 #define LinearVSSteps 100
-#define HiZDepthBias 0.00005
+#define HiZDepthBias 0.00001
 #define LinearSSSteps 100
 #define LINEAR_TRACE_DEPTH_BIAS 0.05
 #define LINEAR_TRACE_2D_THICKNESS 0.1
@@ -74,9 +74,6 @@ void rayIterations(Texture2D frontDepth, SamplerState DepthSampler,
                    half2 invSize, inout half layerThickness)
 {
     bool stop = intersecting;
-    float2 oldPos = 0;
-    float performStitch = 0;
-    const float stitchThredhsold = 50;
     UNITY_LOOP
     for (; (P.x * stepDirection) <= end && stepCount < maxSteps && !stop; P += dP, Q.z += dQ.z, k += dk, stepCount += 1)
     {
@@ -93,29 +90,18 @@ void rayIterations(Texture2D frontDepth, SamplerState DepthSampler,
         sceneZ = SAMPLE_TEXTURE2D_LOD(frontDepth, DepthSampler, half4(hitPixel * invSize, 0, 0), 0).r;
         sceneZ = -LinearEyeDepth(sceneZ, _ZBufferParams);
 
-        bool isBehind = (rayZMin <= sceneZ - LINEAR_TRACE_DEPTH_BIAS );
+        bool isBehind = (rayZMin <= sceneZ - LINEAR_TRACE_DEPTH_BIAS);
         float diff = -(rayZMax - sceneZ);
-        if(isBehind)
+        if (isBehind)
         {
-              if( diff < layerThickness)
-              {
-                  intersecting = true;
-              }
-        }
-        else if(performStitch < 1 && diff < 10)
-        {
-            oldPos =  hitPixel;
+            if (diff < layerThickness)
+            {
+                intersecting = true;
+            }
         }
         stop = intersecting;
     }
 
-    //TODO right now only trace in view space looks correct
-    /*if(performStitch && !intersecting)
-    {
-       intersecting = true;
-       hitPixel = lerp(hitPixel, oldPos, 1);
-    }*/
-   
     P -= dP, Q.z -= dQ.z, k -= dk;
 }
 
@@ -145,14 +131,14 @@ bool Linear2D_Trace(Texture2D frontDepth,
     half4 H0 = TransformViewToHScreen(csOrigin, csZBufferSize);
     half4 H1 = TransformViewToHScreen(csEndPoint, csZBufferSize);
 
-    
+
     half k0 = 1 / H0.w;
     half k1 = 1 / H1.w;
     half2 P0 = H0.xy * k0;
     half2 P1 = H1.xy * k1;
     half3 Q0 = csOrigin * k0;
     half3 Q1 = csEndPoint * k1;
-    
+
     half yMax = csZBufferSize.y - 0.5;
     half yMin = 0.5;
     half xMax = csZBufferSize.x - 0.5;
@@ -206,13 +192,12 @@ bool Linear2D_Trace(Texture2D frontDepth,
     half prevZMaxEstimate = csOrigin.z;
     stepCount = 0;
     half rayZMax = prevZMaxEstimate, rayZMin = prevZMaxEstimate;
-    half sceneZ = 100000;
+    half sceneZ = 10000;
     half end = P1.x * stepDirection;
     bool intersecting = intersectsDepthBuffer(rayZMin, rayZMax, sceneZ, layerThickness);
     half2 P = P0;
     int originalStepCount = 0;
 
-    bool traceBehind_Old = true;
     rayIterations(frontDepth, depthSampler, P, stepDirection, end, originalStepCount,
                   maxSteps,
                   intersecting, sceneZ, dP, Q, dQ, k, dk, rayZMin, rayZMax, prevZMaxEstimate, permute, hitPixel,
@@ -253,18 +238,18 @@ bool IsInfinityFar(float rawDepth)
 }
 
 bool BinarySearchVS(float3 rayStep, inout float3 samplePositionVS, inout float2 reflectUV,
-                    inout float depthDelta, float oneMinusViewReflectDot)
+                    inout float diff, float oneMinusViewReflectDot)
 {
     UNITY_LOOP
     for (int i = 0; i < binaryStepCount; i++)
     {
         rayStep *= 0.5f;
         [flatten]
-        if (depthDelta > 0)
+        if (diff > 0)
         {
             samplePositionVS -= rayStep;
         }
-        else if (depthDelta < 0)
+        else if (diff < 0)
         {
             samplePositionVS += rayStep;
         }
@@ -282,10 +267,10 @@ bool BinarySearchVS(float3 rayStep, inout float3 samplePositionVS, inout float2 
         sampleUV.y += 0.5f;
         reflectUV = sampleUV;
         float sampledDepth = SAMPLE_TEXTURE2D_X_LOD(_CameraDepthTexture, sampler_PointClamp, sampleUV, 0).r;
-        depthDelta = samplePositionVS.z - LinearEyeDepth(sampledDepth, _ZBufferParams);
-
+        float eyeDepth = LinearEyeDepth(sampledDepth, _ZBufferParams);
+        diff = samplePositionVS.z - eyeDepth;
         float minv = 1 / max((oneMinusViewReflectDot * float(i)), 0.001);
-        if (abs(depthDelta) > minv)
+        if (abs(diff) > minv)
         {
             return false;
         }
@@ -301,11 +286,11 @@ bool LinearTraceRayVS(Texture2D _DepthTexture, SamplerState sampler_DepthTexture
     float StepSize = stepSize;
     //StepSize = StepSize * (jitter.x + jitter.y) + StepSize;
 
-    float oldDepth;
-    float oldDiff;
-    float2 oldPos;
+    float oldDepth = 0;
+    float oldDiff = 0;
+    float2 oldPos = float2(0, 0);
     reflectUV = 0;
-    
+
     UNITY_LOOP
     for (int i = 0; i < NumSteps; i++)
     {
@@ -325,25 +310,26 @@ bool LinearTraceRayVS(Texture2D _DepthTexture, SamplerState sampler_DepthTexture
 
         float sampledDepth = SAMPLE_TEXTURE2D_X_LOD(_DepthTexture, sampler_DepthTexture, sampleUV, 0).r;
         UNITY_BRANCH
-        diff = rayPos.z - LinearEyeDepth(sampledDepth, _ZBufferParams);
+            float eyeDepth = LinearEyeDepth(sampledDepth, _ZBufferParams);
+        diff = rayPos.z - eyeDepth;
         if (diff > 0)
         {
-            if( diff < StepSize )
+            if (diff < StepSize)
             {
                 reflectUV = sampleUV.xy;
-                return true;   
+                return true;
             }
-            if( (LinearEyeDepth(sampledDepth, _ZBufferParams) - oldDepth) >  -StepSize * 10)
+            if (eyeDepth - oldDepth > -StepSize * 10)
             {
-                float blend = (oldDiff - diff)/max(oldDiff, diff)*0.5+0.5;
-                reflectUV = lerp(sampleUV, oldPos,blend);
+                float blend = (oldDiff - diff) / max(oldDiff, diff) * 0.5 + 0.5;
+                reflectUV = lerp(sampleUV, oldPos, blend);
                 return true;
             }
         }
-        else
+        else if (diff < 2)
         {
             oldDiff = diff;
-            oldDepth =  LinearEyeDepth(sampledDepth, _ZBufferParams);
+            oldDepth = eyeDepth;
             oldPos.xy = sampleUV;
         }
     }
@@ -358,13 +344,13 @@ half4 FragSSRLinearVS(Varyings input) : SV_Target
     UNITY_BRANCH
     if (IsInfinityFar(rawDepth))
         return float4(input.texcoord, 0, 1);
-    
+
     float3 normalWS = 0;
     #if _SSR_DEFERRED
         half4 gbuffer2 = SAMPLE_TEXTURE2D_X_LOD(_GBuffer2, sampler_PointClamp, input.texcoord, 0);
         normalWS = normalize(UnpackNormal(gbuffer2.xyz));
     #else
-        normalWS = SampleSceneNormals(input.texcoord);
+    normalWS = SampleSceneNormals(input.texcoord);
     #endif
     float3 positionWS = ComputeWorldSpacePosition(input.texcoord.xy, rawDepth, UNITY_MATRIX_I_VP);
     float3 reflectRayWS = normalize(reflect((positionWS - _WorldSpaceCameraPos), normalWS));
@@ -388,7 +374,7 @@ half4 FragSSRLinearVS(Varyings input) : SV_Target
     #if _SSR_DEFERRED
     if (gbuffer2.a <= 0)
        return float4(input.texcoord, 0, 1);
-#endif
+    #endif
     float maxRayLength = LinearVSSteps * _StepSize;
     float maxDist = lerp(min(rayOrigin.z, maxRayLength), maxRayLength, viewReflectDot);
     float numSteps_f = maxDist / _StepSize;
@@ -401,17 +387,17 @@ half4 FragSSRLinearVS(Varyings input) : SV_Target
 
     //binary search refine
     float3 tempRayStep = reflectRayVS * _StepSize;
-   // bool refinedHit = BinarySearchVS(tempRayStep, samplePositionVS, reflectUV, depthDelta, oneMinusViewReflectDot);
-   // hasValidHit *= refinedHit ? 1 : 0;
+    //bool refinedHit = BinarySearchVS(tempRayStep, samplePositionVS, reflectUV, depthDelta, oneMinusViewReflectDot);
+    //hasValidHit *= refinedHit ? 1 : 0;
 
     //check back facing
     float3 currentNormal = 0;
     #if _SSR_DEFERRED
         currentNormal = UnpackNormal(SAMPLE_TEXTURE2D_X_LOD(_GBuffer2, sampler_PointClamp, reflectUV, 0).xyz);
     #else
-        currentNormal = SampleSceneNormals(reflectUV);
+    currentNormal = SampleSceneNormals(reflectUV);
     #endif
- 
+
     float backFaceDot = dot(currentNormal, reflectRayWS);
     hasValidHit *= backFaceDot > 0 ? 0 : 1;
 
@@ -446,7 +432,7 @@ half4 FragSSRLinearSS(Varyings input) : SV_Target
         half4 gbuffer2 = SAMPLE_TEXTURE2D_X_LOD(_GBuffer2, sampler_PointClamp, input.texcoord, 0);
         normalWS = normalize(UnpackNormal(gbuffer2.xyz));
     #else
-        normalWS = SampleSceneNormals(input.texcoord);
+    normalWS = SampleSceneNormals(input.texcoord);
     #endif
     float3 positionWS = ComputeWorldSpacePosition(input.texcoord.xy, rawDepth, UNITY_MATRIX_I_VP);
     float3 reflectRayWS = normalize(reflect((positionWS - _WorldSpaceCameraPos), normalWS));
@@ -464,7 +450,8 @@ half4 FragSSRLinearSS(Varyings input) : SV_Target
     float stepSize = _StepSize * 100;
     float hasValidHit = 0;
     bool hasTraceHit = Linear2D_Trace(_CameraDepthTexture, sampler_PointClamp, rayOrigin, reflectRayVS,
-                                      _SSR_ProjectionMatrix, _SSR_ScreenSize, jitter, LinearSSSteps, LINEAR_TRACE_2D_THICKNESS,
+                                      _SSR_ProjectionMatrix, _SSR_ScreenSize, jitter, LinearSSSteps,
+                                      LINEAR_TRACE_2D_THICKNESS,
                                       traceDistance, reflectUV, stepSize, hitPointVS, stepCount);
     reflectUV /= _SSR_ScreenSize;
 
@@ -560,7 +547,7 @@ inline float2 cross_epsilon()
 inline float2 cell(float2 ray, float2 cell_count)
 {
     float2 aligned_uv = floor(ray.xy * cell_count);
-return aligned_uv;
+    return aligned_uv;
     //return floor(ray.xy * cell_count);
 }
 
@@ -598,7 +585,7 @@ inline float3 intersectCellBoundary(float3 o, float3 d, float2 cellIndex, float2
 }
 
 inline float3 hiZTrace(float thickness, float3 p, float3 v, float MaxIterations, out float hit, out float iterations,
-                       out bool isSky)
+                       out bool isSky, out float debug)
 {
     const int rootLevel = HIZ_MAX_LEVEL;
     const int endLevel = HIZ_STOP_LEVEL;
@@ -619,13 +606,14 @@ inline float3 hiZTrace(float thickness, float3 p, float3 v, float MaxIterations,
     float3 d = v.xyz / v.z;
     // get the cell cross direction and a small offset to enter the next cell when doing cell crossing
     float2 crossStep = float2(d.x >= 0.0f ? 1.0f : -1.0f, d.y >= 0.0f ? 1.0f : -1.0f);
-    float2 crossOffset = float2(crossStep.xy * 0.0001 );// float2(crossStep.xy * cross_epsilon() );
+    float2 crossOffset = float2(crossStep.xy * 0.0001); // float2(crossStep.xy * cross_epsilon() );
     crossStep.xy = saturate(crossStep.xy);
 
     // set current ray to original screen coordinate and depth
     float3 ray = p.xyz;
     // cross to next cell to avoid immediate self-intersection
     float2 rayCell = cell(ray.xy, cell_count(level));
+    float failedToHit = 1;
     ray = intersectCellBoundary(ray, d, rayCell.xy, cell_count(level), crossStep.xy, crossOffset.xy);
     [loop]
     while (level >= endLevel
@@ -645,9 +633,9 @@ inline float3 hiZTrace(float thickness, float3 p, float3 v, float MaxIterations,
         // intersect only if ray depth is below the minimum depth plane
         float3 tmpRay = ray;
         float min_minus_ray = minZ - ray.z;
-        
+
         tmpRay = min_minus_ray > 0 ? intersectDepthPlane(tmpRay, d, min_minus_ray) : tmpRay;
-        
+
         // get the new cell number as well
         const float2 newCellIdx = cell(tmpRay.xy, cellCount);
         // if the new cell number is different from the old cell number, a cell was crossed
@@ -656,19 +644,21 @@ inline float3 hiZTrace(float thickness, float3 p, float3 v, float MaxIterations,
         {
             // intersect the boundary of that cell instead, and go up a level for taking a larger step next iteration
             tmpRay = intersectCellBoundary(ray, d, oldCellIdx, cellCount.xy, crossStep.xy, crossOffset.xy);
+            failedToHit = 0;
             level = min(rootLevel, level + 2.0f);
         }
         else if (level == startLevel)
         {
             float minZOffset = (minZ + (1 - p.z) * thickness);
             isSky = minZ == 1;
-            if(minZ >= 1)
+            if (minZ >= 1)
                 break;
             [flatten]
             if (abs(min_minus_ray) > HiZDepthBias)
             {
                 tmpRay = intersectCellBoundary(ray, d, oldCellIdx, cellCount.xy, crossStep.xy, crossOffset.xy);
                 level = HIZ_START_LEVEL + 1;
+                failedToHit = 0;
             }
         }
         // go down a level in the hi-z buffer
@@ -677,17 +667,18 @@ inline float3 hiZTrace(float thickness, float3 p, float3 v, float MaxIterations,
         ++iterations;
     }
     hit = level < endLevel ? 1 : 0;
-    hit = iterations > 0 ? hit : 0;
+    //hit = iterations > 0 ? hit : 0;
+    debug = failedToHit;
     return ray;
 }
 
 half4 FragSSRHizSS(Varyings input) : SV_Target
 {
     UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
-    float rawDepth = 1.0-sampleDepth(input.texcoord, 0);
-
+    float rawDepth = 1.0 - sampleDepth(input.texcoord, 0);
     float2 tempUv = PaddedToNativeUV(input.texcoord);
     float2 originalUV = input.texcoord;
+
     input.texcoord = tempUv;
 
     //since we are working with padded textures, we want avoid working on padded pixels
@@ -709,12 +700,11 @@ half4 FragSSRHizSS(Varyings input) : SV_Target
         smoothness =  gbuffer2.a;
         normalWS = normalize(UnpackNormal(gbuffer2.xyz));
     #else
-        normalWS = SampleSceneNormals(input.texcoord);
+    normalWS = SampleSceneNormals(input.texcoord);
     #endif
     float3 positionWS = ComputeWorldSpacePosition(input.texcoord.xy, rawDepth, UNITY_MATRIX_I_VP);
-    float3 reflectRayWS = normalize(reflect((positionWS - _WorldSpaceCameraPos), normalWS));
-    float3 viewDir = normalize(float3(positionWS.xyz) - _WorldSpaceCameraPos);
-    float3 reflectionRay_w = reflect(viewDir, normalWS);
+    float3 viewDirWS = normalize(float3(positionWS.xyz) - _WorldSpaceCameraPos);
+    float3 reflectRayWS = normalize(reflect(viewDirWS, normalWS));
     float3 reflectRayVS = TransformWorldToViewDir(reflectRayWS);
     float3 rayOrigin = TransformWorldToView(positionWS);
 
@@ -724,27 +714,27 @@ half4 FragSSRHizSS(Varyings input) : SV_Target
     float4 vReflectionEndPosInCS = mul(UNITY_MATRIX_P, float4(vReflectionEndPosInVS.xyz, 1));
     vReflectionEndPosInCS /= vReflectionEndPosInCS.w;
     vReflectionEndPosInCS.z = 1 - (vReflectionEndPosInCS.z);
-    
+
     float2 ditherUV = (input.texcoord) * _ScreenParams.xy;
     uint index = (uint(ditherUV.x) % 4) * 4 + uint(ditherUV.y) % 4;
-    
-    float jitter = (1 + (1 - dither[index]));
-    float ddd = saturate(dot(_WorldSpaceViewDir, reflectionRay_w));
-    float thickness = 0.01 * (1 - ddd);
-    float traceDistance = 200;
-    float3 hitPointVS = rayOrigin;
-    float stepCount = 0;
-    float stepSize = _StepSize * 100;
-    float hasValidHit = 0;
 
+    float jitter = (1 + (1 - dither[index]));
+    float ddd = saturate(dot(_WorldSpaceViewDir, reflectRayWS));
+    float thickness = 0.01 * (1 - ddd);
+    float hasValidHit = 0;
     
     UNITY_BRANCH
-    if(smoothness < 0.5)
+    if (smoothness < 0.5)
     {
-        float2 realIntersectUv =  input.texcoord;
+        float stepCount = 0;
+        float stepSize = _StepSize * 100;
+        float traceDistanceSS = 200;
+        float3 hitPointVS = rayOrigin;
+        float2 realIntersectUv = input.texcoord;
         bool hasTraceHit = Linear2D_Trace(_CameraDepthTexture, sampler_PointClamp, rayOrigin, reflectRayVS,
-                                          _SSR_ProjectionMatrix, _SSR_ScreenSize, jitter, LinearSSSteps, LINEAR_TRACE_2D_THICKNESS,
-                                          traceDistance, realIntersectUv, stepSize, hitPointVS, stepCount);
+                                          _SSR_ProjectionMatrix, _SSR_ScreenSize, jitter, LinearSSSteps,
+                                          LINEAR_TRACE_2D_THICKNESS,
+                                          traceDistanceSS, realIntersectUv, stepSize, hitPointVS, stepCount);
         realIntersectUv /= _SSR_ScreenSize;
 
         hasValidHit = hasTraceHit ? 1 : 0;
@@ -760,68 +750,46 @@ half4 FragSSRHizSS(Varyings input) : SV_Target
         hasValidHit *= screenEdgeFade;
         return float4(realIntersectUv, hasValidHit, fadeMask);
     }
-    else
-    {
-        posCS.z = 1 - (posCS.z);
-        
-        float3 outReflDirInTS = normalize((vReflectionEndPosInCS - posCS).xyz);
-        outReflDirInTS.xy *= float2(0.5f, -0.5f);
-        //convert to padded space
-        outReflDirInTS.xy = NativeToPaddedUV(outReflDirInTS.xy);
-        float3 outSamplePosInTS = float3(NativeToPaddedUV(input.texcoord) + outReflDirInTS.xy * 0, posCS.z + outReflDirInTS.z * -0);
 
-        float hit = 0;
-        float mask = smoothstep(0, 0.1f, ddd);
-        float iterations = 0;
-        bool isSky = 0;
-        float3 intersectPoint = hiZTrace(thickness, outSamplePosInTS, outReflDirInTS, HizSSSteps, hit, iterations, isSky);
-        float2 realIntersectUv = PaddedToNativeUV(intersectPoint.xy);
-        
-        if (realIntersectUv.x > 1 || realIntersectUv.x < 0 || realIntersectUv.y > 1 || realIntersectUv.y < 0)
-            return 0;
-        float edgeMask = 1;
-        
-        edgeMask = ScreenEdgeMask(realIntersectUv.xy * 2 - 1);
-        // TODO use VS trace as fallback to 'stitch' the gap
-        
-       /* if(edgeMask >= 1 && !hit)
-        {
-            bool hasTraceHit = Linear2D_Trace(_CameraDepthTexture, sampler_PointClamp, rayOrigin, reflectRayVS,
-                                         _SSR_ProjectionMatrix, _SSR_ScreenSize, jitter, LinearSSSteps, LINEAR_TRACE_2D_THICKNESS,
-                                         traceDistance, realIntersectUv, stepSize, hitPointVS, stepCount);
-            realIntersectUv /= _SSR_ScreenSize;
-            hasValidHit = hasTraceHit ? 1 : 0;
-            UNITY_BRANCH
-            if (hasTraceHit)
-            {
-                float stepFade = (1 - max(2 * half(stepCount) / half(LinearSSSteps) - 1, 0));
-                stepFade = stepFade * stepFade;
-                hasValidHit *= stepFade;
-            }
-            float screenEdgeFade = ScreenEdgeMask((realIntersectUv - 0.5) * 2);
-            float fadeMask = screenEdgeFade;
-            hasValidHit *= screenEdgeFade;
-            return float4(realIntersectUv, hasValidHit, fadeMask);
-        }*/
-        
-        if (rawDepth == 0)
-        {
-            float3 normalWS = 0;
-            float3 tnorm = 0;
-            #if _SSR_DEFERRED
+    posCS.z = 1 - (posCS.z);
+
+    float3 outReflDirInTS = normalize((vReflectionEndPosInCS - posCS).xyz);
+    outReflDirInTS.xy *= float2(0.5f, -0.5f);
+    //convert to padded space
+    outReflDirInTS.xy = NativeToPaddedUV(outReflDirInTS.xy);
+    float3 outSamplePosInTS = float3(NativeToPaddedUV(input.texcoord) + outReflDirInTS.xy * 0,
+                                     posCS.z + outReflDirInTS.z * -0);
+
+    float hit = 0;
+    float mask = smoothstep(0, 0.1f, ddd);
+    float iterations = 0;
+    bool isSky = 0;
+    float debug = 1;
+    float3 intersectPoint = hiZTrace(thickness, outSamplePosInTS, outReflDirInTS, HizSSSteps, hit, iterations, isSky,
+                                     debug);
+    float2 realIntersectUv = PaddedToNativeUV(intersectPoint.xy);
+    if (realIntersectUv.x > 1 || realIntersectUv.x < 0 || realIntersectUv.y > 1 || realIntersectUv.y < 0)
+        return 0;
+    
+    float edgeMask = 1;
+    edgeMask = ScreenEdgeMask(realIntersectUv.xy * 2 - 1);
+    if (rawDepth == 0)
+    {
+        float3 normalWS = 0;
+        float3 tnorm = 0;
+        #if _SSR_DEFERRED
             tnorm = UnpackNormal(SAMPLE_TEXTURE2D_X_LOD(_GBuffer2, sampler_PointClamp, realIntersectUv.xy, 0));
-            #else
-            tnorm = SampleSceneNormals(realIntersectUv.xy);
-            #endif
-            float d = dot(reflectRayWS, tnorm);
-            if (d > 0)
-            {
-                edgeMask = 0;
-            }
+        #else
+        tnorm = SampleSceneNormals(realIntersectUv.xy);
+        #endif
+        float d = dot(reflectRayWS, tnorm);
+        if (d > 0)
+        {
+            edgeMask = 0;
         }
-        float fadeMask = edgeMask;
-        mask *= hit * edgeMask;
-      
-        return float4(realIntersectUv, mask, fadeMask);   
     }
+    float fadeMask = edgeMask;
+    mask *= hit * edgeMask;
+
+    return float4(realIntersectUv, mask, fadeMask);
 }
