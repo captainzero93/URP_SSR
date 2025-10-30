@@ -1096,3 +1096,4 @@ Shader "Hidden/Lighting/ScreenSpaceGlobalIllumination"
         }
     }
 }
+ 
